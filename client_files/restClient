@@ -1,0 +1,86 @@
+#!/usr/bin/python
+
+# Note: This file must be made executable in order for LinuxCNC to be able to use it.
+
+# In LinuxCNC (Debian-based) and logged in as root:
+#
+# apt-get install python-pip
+# pip install requests
+#
+# It may take some hacking to make pip work with HTTPS as LinuxCNC doesn't necessarily keep up with the latest trendy 
+# annoyances.
+#
+# Creating a pip.conf and adding these two lines fixed the problem on my system.
+# root@g0704-linuxcnc:/home/linuxcnc# cat /root/.pip/pip.conf 
+# [global]
+# index-url=https://pypi.python.org/pypi/
+#
+# Tested on this system:
+#
+# linuxcnc@g0704-linuxcnc:~$ uname -a
+# Linux g0704-linuxcnc 3.4-9-rtai-686-pae #1 SMP PREEMPT Debian 3.4.55-4linuxcnc i686 GNU/Linux
+# linuxcnc@g0704-linuxcnc:~$ cat /etc/issue
+# Debian GNU/Linux 7 \n \l
+# linuxcnc@g0704-linuxcnc:~$ python --version
+# Python 2.7.3
+#
+
+
+#import sys
+#import linuxcnc
+import hal
+import requests
+import time
+
+h = hal.component('restClient')
+h.newpin("spindle_cmd_rpm", hal.HAL_FLOAT, hal.HAL_IN)
+h.ready()
+
+def main():
+	print('hi') 
+#	setSpindleRPM(100)
+	while 1:
+		setSpindleRPM(h.spindle_cmd_rpm)
+		print(h.spindle_cmd_rpm)
+		time.sleep(1)
+
+def setSpindleRPM(rpm):
+	try:
+		resp = requests.post("http://raspberrypi.local:8080/spindle", json = {"value" : rpm})
+
+		if resp.status_code != 200:
+			print('HTTP POST error: %d', resp.status_code)
+	except:
+		print('Connection Error!')
+
+
+def getSpindleRPM():
+	try:
+		resp = requests.get('http://raspberrypi.local/spindle')
+
+		if resp.status_code != 200:
+			print('HTTP GET error: %d', resp.status_code)
+
+
+	except:
+		print('Connection Error')
+
+
+	
+if __name__ == "__main__":
+	main()
+
+
+
+'''
+try:
+	s = linuxcnc.stat()
+	s.poll()
+except linuxcnc.error, detail:
+	print "error", detail
+	sys.exit(1)
+
+for x in dir(s)
+	if not x.startswith("X"):
+		print x, getattr(s, x)
+'''
