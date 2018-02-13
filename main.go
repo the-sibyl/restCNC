@@ -97,21 +97,6 @@ func (d *dac) RampToRPM(rpm int) {
 	} else {
 		delta = -1
 	}
-
-	gpio21, err := sysfsGPIO.InitPin(21, "out")
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	go func() {
-		for {
-			gpio21.SetHigh()
-			time.Sleep(time.Second * 5)
-			gpio21.SetLow()
-			time.Sleep(time.Second * 5)
-		}
-	} ()
-
 	for cur := d.CurVoltage; cur != finalVoltage; cur += delta {
 		err := d.WriteVoltage(cur)
 		if err != nil {
@@ -158,6 +143,20 @@ func main() {
 		panic(err)
 	}
 	defer d.Close()
+
+	gpio21, err := sysfsGPIO.InitPin(21, "out")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	go func() {
+		for {
+			gpio21.SetHigh()
+			time.Sleep(time.Second * 5)
+			gpio21.SetLow()
+			time.Sleep(time.Second * 5)
+		}
+	} ()
 
 	for {
 		fmt.Println("Ramping")
