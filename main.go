@@ -40,7 +40,8 @@ type SpindleRPM struct {
 
 var spindleRPM SpindleRPM
 
-type dac struct {
+type dacIO struct {
+	PSUEnaPin *sysfsGPIO.IOPin
 	I2CConn *i2c.Device
 	A0Pin *sysfsGPIO.IOPin
 	// Time delay between sending commands when ramping up/down RPM
@@ -52,8 +53,8 @@ type dac struct {
 }
 
 // Open the device
-func Open(devString string, i2cAddress int, a0Pin int) (*dac, error) {
-	var d dac
+func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, error) {
+	var d dacIO
 	var err error
 
 	// Default ramp delay
@@ -70,23 +71,34 @@ func Open(devString string, i2cAddress int, a0Pin int) (*dac, error) {
 	d.A0Pin.SetLow()
 	// Set up I2C
 	d.I2CConn, err = i2c.Open(&i2c.Devfs{Dev: devString}, i2cAddress)
+	if err != nil {
+		return &d, err
+	}
+
+	// Enable pin for the power supply, active high
+	d.PSUEnaPin, err = sysfsGPIO.InitPin(psuEnaPin, "out")
+	if err != nil {
+		return &d, err
+	}
+	d.PSUEnaPin.SetLow()
 
 	return &d, err
 }
 
 // Close the device
-func (d *dac) Close() {
+func (d *dacIO) Close() {
 	d.A0Pin.ReleasePin()
 	d.I2CConn.Close()
+	d.PSUEnaPin.ReleasePin()
 }
 
 // Set the sleep duration between when a voltage command is sent to ramp up/down
-func (d *dac) SetRampDelay(t time.Duration) {
+func (d *dacIO) SetRampDelay(t time.Duration) {
 	d.RampDelay = t
 }
 
 // Ramp upward or downward to a particular RPM value, LSB by LSB
-func (d *dac) RampToRPM(rpm int) {
+func (d *dacIO) RampToRPM(rpm int) {
 	finalVoltage := int(float32(rpm) * d.DACScaleFactor)
 	fmt.Println("rpm:", rpm, "final voltage:", finalVoltage)
 
@@ -109,7 +121,7 @@ func (d *dac) RampToRPM(rpm int) {
 }
 
 // Write the voltage to volatile memory
-func (d *dac) WriteVoltage(voltage int) error {
+func (d *dacIO) WriteVoltage(voltage int) error {
 	if voltage < 0 || voltage >= 1 << 12 {
 		return errors.New("WriteVoltage() voltage value out of range")
 	}
@@ -124,8 +136,16 @@ func (d *dac) WriteVoltage(voltage int) error {
 }
 
 // This function needs to be done one time per device to set the power-up default output to 0V
-func (d *dac) WriteNVInit() error {
+func (d *dacIO) WriteNVInit() error {
 	return nil
+}
+
+func (d *dacIO) EnablePSU() error {
+	return d.PSUEnaPin.SetHigh()
+}
+
+func (d *dacIO) DisablePSU() error {
+	return d.PSUEnaPin.SetLow()
 }
 
 func main() {
@@ -135,25 +155,18 @@ func main() {
 	// LED is wired for active low
 	gpio22.SetLow()
 
-	//a.I2CConnd, err = i2c.Open(&i2c.Devfs{Dev: "/dev/i2c-1"}, 0x62)
-
-	// Open the I2C ADC
-	d, err := Open("/dev/i2c-1", 0x62, 4)
+	// Open the I2C DAC and set up the power supply enable
+	d, err := Open("/dev/i2c-1", 0x62, 4, 21)
 	if err != nil {
 		panic(err)
 	}
 	defer d.Close()
 
-	gpio21, err := sysfsGPIO.InitPin(21, "out")
-	if err != nil {
-		fmt.Println(err)
-	}
-
 	go func() {
 		for {
-			gpio21.SetHigh()
+			d.EnablePSU()
 			time.Sleep(time.Second * 5)
-			gpio21.SetLow()
+			d.DisablePSU()
 			time.Sleep(time.Second * 5)
 		}
 	} ()
