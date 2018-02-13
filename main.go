@@ -60,7 +60,7 @@ func Open(devString string, i2cAddress int, a0Pin int) (*dac, error) {
 	d.RampDelay = 0
 
 	// Default scale factor (guess)
-	d.DACScaleFactor = 0.95
+	d.DACScaleFactor = 0.4
 
 	// The LSB of the I2C address (A0) is configured from this GPIO. Set it low to make A0=0.
 	d.A0Pin, err = sysfsGPIO.InitPin(a0Pin, "out")
@@ -87,7 +87,8 @@ func (d *dac) SetRampDelay(t time.Duration) {
 
 // Ramp upward or downward to a particular RPM value, LSB by LSB
 func (d *dac) RampToRPM(rpm int) {
-	finalVoltage := int((1 << 12) * d.DACScaleFactor)
+	finalVoltage := int(float32(rpm) * d.DACScaleFactor)
+	fmt.Println("rpm:", rpm, "final voltage:", finalVoltage)
 
 	delta := 0
 
@@ -96,6 +97,20 @@ func (d *dac) RampToRPM(rpm int) {
 	} else {
 		delta = -1
 	}
+
+	gpio21, err := sysfsGPIO.InitPin(21, "out")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	go func() {
+		for {
+			gpio21.SetHigh()
+			time.Sleep(time.Second * 5)
+			gpio21.SetLow()
+			time.Sleep(time.Second * 5)
+		}
+	} ()
 
 	for cur := d.CurVoltage; cur != finalVoltage; cur += delta {
 		err := d.WriteVoltage(cur)
@@ -144,7 +159,22 @@ func main() {
 	}
 	defer d.Close()
 
-	d.RampToRPM(10000)
+	for {
+		fmt.Println("Ramping")
+		d.RampToRPM(10000)
+		d.RampToRPM(5000)
+		d.RampToRPM(10000)
+		d.RampToRPM(6000)
+		d.RampToRPM(8000)
+		d.RampToRPM(100)
+		d.RampToRPM(1000)
+		d.RampToRPM(500)
+		d.RampToRPM(10)
+		d.RampToRPM(7000)
+		d.RampToRPM(0)
+		d.RampToRPM(3850)
+		d.RampToRPM(350)
+	}
 
 	spindleRPM.Value = -12345
 
