@@ -44,6 +44,8 @@ type dacIO struct {
 	DACScaleFactor float32
 	// CNC REST Server struct to handle I/O from the LinuxCNC machine
 	RestServer *CNCRestServer.RestServer
+	// Daemon control channel
+	daemonControl chan bool
 }
 
 // Open the device
@@ -79,6 +81,11 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, e
 	d.RestServer = CNCRestServer.Open(":8080")
 // TODO: Connect channels to a handler goroutine
 
+	// Run a daemon goroutine
+	// This channel will close the daemon as soon as a value (true) is passed
+	d.daemonControl = make(chan bool)
+	go d.daemon()
+
 	return &d, err
 }
 
@@ -87,6 +94,21 @@ func (d *dacIO) Close() {
 	d.A0Pin.ReleasePin()
 	d.I2CConn.Close()
 	d.PSUEnaPin.ReleasePin()
+}
+
+func (d *dacIO) daemon() {
+	for {
+		select {
+			case <-d.daemonControl:
+				return
+			case ena := <-d.RestServer.SpindleEnable:
+				_ = ena
+				return
+			case nsp := <-d.RestServer.NewSetpoint:
+				_ = nsp
+				return
+		}
+	}
 }
 
 // Set the sleep duration between when a voltage command is sent to ramp up/down
