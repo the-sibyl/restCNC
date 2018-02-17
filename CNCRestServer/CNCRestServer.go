@@ -56,7 +56,7 @@ func httpIndex(w http.ResponseWriter, r *http.Request) {
 // Return the current spindle state to the client
 // This can be tested with curl.
 // curl -i -X GET -H "Content-Type:application/json" http://localhost:8080/spindle
-func (c *CNCRestServer) httpGetSpindle(w http.ResponseWriter, r *http.Request) {
+func (c *RestServer) httpGetSpindle(w http.ResponseWriter, r *http.Request) {
 	currentState := SpindleDataOut{
 		Ramping: <-c.Ramping,
 		CurrentSetpoint: <- c.CurrentSetpoint,
@@ -83,7 +83,7 @@ func (c *CNCRestServer) httpGetSpindle(w http.ResponseWriter, r *http.Request) {
 // Set a new spindle state
 // This can be tested with curl.
 // curl -i -X POST -H "Content-Type:application/json" http://localhost:8080/spindle -d '{"value":12345}'
-func (c *CNCRestServer) httpPostSpindle(w http.ResponseWriter, r *http.Request) {
+func (c *RestServer) httpPostSpindle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusOK)
 
@@ -105,7 +105,7 @@ func (c *CNCRestServer) httpPostSpindle(w http.ResponseWriter, r *http.Request) 
 	c.SpindleEnable <- newState.Enable
 	c.NewSetpoint <- newState.Setpoint
 }
-type CNCRestServer struct {
+type RestServer struct {
 	router *mux.Router
 	httpServer *http.Server
 	// Data from device
@@ -120,8 +120,8 @@ type CNCRestServer struct {
 	SpindleEnable chan bool
 }
 
-func Open(addr string) (*CNCRestServer) {
-	var c CNCRestServer
+func Open(addr string) (*RestServer) {
+	var c RestServer
 
 	// Set up REST/HTTP portions
 	c.router = mux.NewRouter().StrictSlash(true)
@@ -146,7 +146,7 @@ func Open(addr string) (*CNCRestServer) {
 	return &c
 }
 
-func (c *CNCRestServer) Close() {
+func (c *RestServer) Close() {
 	c.httpServer = nil
 	c.router = nil
 }
