@@ -27,7 +27,7 @@ import (
 
 	"golang.org/x/exp/io/i2c"
 	"github.com/the-sibyl/sysfsGPIO"
-//	"github.com/the-sibyl/restCNC/CNCRestServer"
+	"github.com/the-sibyl/restCNC/CNCRestServer"
 )
 
 
@@ -42,6 +42,8 @@ type dacIO struct {
 	CurVoltage int
 	// Arbitrary scale factor. This should be improved upon if the project is expanded.
 	DACScaleFactor float32
+	// CNC REST Server struct to handle I/O from the LinuxCNC machine
+	RestServer *CNCRestServer.RestServer
 }
 
 // Open the device
@@ -73,6 +75,9 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, e
 		return &d, err
 	}
 	d.PSUEnaPin.SetHigh()
+
+	d.RestServer = CNCRestServer.Open(":8080")
+// TODO: Connect channels to a handler goroutine
 
 	return &d, err
 }
