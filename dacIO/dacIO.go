@@ -181,8 +181,17 @@ func (d *DacIO) writeVoltage(voltage int) error {
 
 // This function needs to be done one time per device to set the power-up default output to 0V
 func (d *DacIO) WriteNVInit() error {
-	// TODO: Complete this
-	return nil
+	eepromCmd := make([]byte, 3)
+
+	eepromCmd[0] = 0x60
+	eepromCmd[1] = 0x0
+	eepromCmd[2] = 0x0
+
+	eepromCmd = append(eepromCmd, eepromCmd...)
+
+	err := d.i2cConn.Write(eepromCmd)
+
+	return err
 }
 
 func (d *DacIO) EnablePSU() error {
