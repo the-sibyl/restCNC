@@ -30,7 +30,7 @@ import (
 	"golang.org/x/exp/io/i2c"
 )
 
-type dacIO struct {
+type DacIO struct {
 	// Hardware-related fields
 	// Power supply enable pin
 	psuEnaPin *sysfsGPIO.IOPin
@@ -57,8 +57,8 @@ type dacIO struct {
 }
 
 // Open the device
-func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, error) {
-	var d dacIO
+func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*DacIO, error) {
+	var d DacIO
 	var err error
 
 	d.mutex = &sync.Mutex{}
@@ -91,6 +91,7 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, e
 	d.EStop = make(chan bool)
 	d.eStop = true
 
+	// Goroutine to handle emergency stop signal
 	go func() {
 		for {
 			select {
@@ -99,7 +100,11 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, e
 				if d.eStop {
 					d.DisablePSU()
 				} else {
+					// Placing a mutex here to prevent a possible race condition if the EStop 
+					// signal is deasserted shortly before setting a new spindle RPM
+					d.mutex.Lock()
 					d.EnablePSU()
+					d.mutex.Unlock()
 				}
 			}
 		}
@@ -109,14 +114,14 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, e
 }
 
 // Close the device
-func (d *dacIO) Close() {
+func (d *DacIO) Close() {
 	d.a0Pin.ReleasePin()
 	d.i2cConn.Close()
 	d.psuEnaPin.ReleasePin()
 }
 
 // Set the sleep duration between when a voltage command is sent to ramp up/down
-func (d *dacIO) SetRampDelay(t time.Duration) {
+func (d *DacIO) SetRampDelay(t time.Duration) {
 	d.mutex.Lock()
 
 	d.rampDelay = t
@@ -125,7 +130,7 @@ func (d *dacIO) SetRampDelay(t time.Duration) {
 }
 
 // Ramp upward or downward to a particular RPM value, LSB by LSB. This function may be interrupted by an EStop signal.
-func (d *dacIO) RampToRPM(rpm int) {
+func (d *DacIO) RampToRPM(rpm int) {
 	d.mutex.Lock()
 
 	finalVoltage := int(float32(rpm) * d.dacScaleFactor)
@@ -160,7 +165,7 @@ func (d *dacIO) RampToRPM(rpm int) {
 }
 
 // Write the voltage to volatile memory
-func (d *dacIO) writeVoltage(voltage int) error {
+func (d *DacIO) writeVoltage(voltage int) error {
 	if voltage < 0 || voltage >= 1<<12 {
 		return errors.New("writeVoltage() voltage value out of range")
 	}
@@ -175,19 +180,19 @@ func (d *dacIO) writeVoltage(voltage int) error {
 }
 
 // This function needs to be done one time per device to set the power-up default output to 0V
-func (d *dacIO) WriteNVInit() error {
+func (d *DacIO) WriteNVInit() error {
 	// TODO: Complete this
 	return nil
 }
 
-func (d *dacIO) EnablePSU() error {
+func (d *DacIO) EnablePSU() error {
 	d.mutex.Lock()
 	err := d.psuEnaPin.SetLow()
 	d.mutex.Unlock()
 	return err
 }
 
-func (d *dacIO) DisablePSU() error {
+func (d *DacIO) DisablePSU() error {
 	d.mutex.Lock()
 	err := d.psuEnaPin.SetHigh()
 	d.mutex.Unlock()

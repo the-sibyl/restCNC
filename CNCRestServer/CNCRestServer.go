@@ -27,25 +27,26 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/the-sibyl/restCNC/dacIO"
 )
 
 // Structure for JSON marshalling. Tags are on the right.
 // JSON from LinuxCNC machine
-type SpindleDataIn struct {
+type spindleDataIn struct {
 	// Spindle enable signal
-	Enable bool `json:"enable"`
+	enable bool `json:"enable"`
 	// Set point: the current commanded RPM
-	Setpoint float64 `json:"setpoint"`
+	setpoint float64 `json:"setpoint"`
 }
 
 // JSON to LinuxCNC machine
-type SpindleDataOut struct {
+type spindleDataOut struct {
 	// Ramping state: if false, the spindle is not yet to speed
-	Ramping bool `json:"ramping"`
+	ramping bool `json:"ramping"`
 	// Current Setpoint
-	CurrentSetpoint float64 `json:"currentsetpoint"`
+	currentSetpoint float64 `json:"currentsetpoint"`
 	// Current RPM: the actual current RPM
-	CurrentRPM float64 `json:"currentrpm"`
+	currentRPM float64 `json:"currentrpm"`
 }
 
 // Root HTTP response for debugging
@@ -57,10 +58,10 @@ func httpIndex(w http.ResponseWriter, r *http.Request) {
 // This can be tested with curl.
 // curl -i -X GET -H "Content-Type:application/json" http://localhost:8080/spindle
 func (c *RestServer) httpGetSpindle(w http.ResponseWriter, r *http.Request) {
-	currentState := SpindleDataOut{
-		Ramping: <-c.Ramping,
-		CurrentSetpoint: <- c.CurrentSetpoint,
-		CurrentRPM: <-c.CurrentRPM,
+	currentState := spindleDataOut{
+		ramping: c.ramping,
+		currentSetpoint: c.currentSetpoint,
+		currentRPM: c.currentRPM,
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -87,7 +88,7 @@ func (c *RestServer) httpPostSpindle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.WriteHeader(http.StatusOK)
 
-	var newState SpindleDataIn
+	var newState spindleDataIn
 
 	// Read incoming HTTP text
 	incomingText, err := ioutil.ReadAll(r.Body)
@@ -102,22 +103,28 @@ func (c *RestServer) httpPostSpindle(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 	}
 
-	c.SpindleEnable <- newState.Enable
-	c.NewSetpoint <- newState.Setpoint
+	if !newState.enable {
+		c.hw.EStop <- true
+	} else if !c.ramping {
+		c.ramping = true
+		c.hw.EStop <- false
+		c.currentSetpoint = newState.setpoint
+		c.hw.RampToRPM(int(newState.setpoint))
+		// Once RampToRPM() has returned, assume that the desired values are all true. This is a rudimentary
+		// approach.
+		c.currentRPM = newState.setpoint
+	}
 }
 type RestServer struct {
 	router *mux.Router
 	httpServer *http.Server
-	// Data from device
-	CurrentSetpoint chan float64
-	// Data from device
-	CurrentRPM chan float64
-	// Data to device
-	NewSetpoint chan float64
-	// Data from device
-	Ramping chan bool
-	// Data to device
-	SpindleEnable chan bool
+	hw *dacIO.DacIO
+
+	// Parameters for the spindle
+	currentSetpoint float64
+	currentRPM float64
+	ramping bool
+	spindleEnable bool
 }
 
 func Open(addr string) (*RestServer) {
@@ -137,12 +144,13 @@ func Open(addr string) (*RestServer) {
 	c.httpServer.Handler = c.router
 	c.httpServer.ListenAndServe()
 
-	// Set up buffered channels
-	c.CurrentSetpoint = make(chan float64, 1)
-	c.CurrentRPM = make(chan float64, 1)
-	c.NewSetpoint = make(chan float64, 1)
-	c.Ramping = make(chan bool, 1)
-	c.SpindleEnable = make(chan bool, 1)
+	c.currentSetpoint = 0
+	c.currentRPM = 0
+	c.ramping = false
+	c.spindleEnable = false
+
+// TODO: set c.hw
+
 	return &c
 }
 
