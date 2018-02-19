@@ -98,12 +98,14 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*DacIO, e
 			case d.eStop = <-d.EStop:
 				// Disable the power supply upon emergency stop
 				if d.eStop {
-					d.DisablePSU()
+					d.mutex.Lock()
+					d.disablePSU()
+					d.mutex.Unlock()
 				} else {
-					// Placing a mutex here to prevent a possible race condition if the EStop 
+					// Placing a mutex here to prevent a possible race condition if the EStop
 					// signal is deasserted shortly before setting a new spindle RPM
 					d.mutex.Lock()
-					d.EnablePSU()
+					d.enablePSU()
 					d.mutex.Unlock()
 				}
 			}
@@ -194,16 +196,12 @@ func (d *DacIO) WriteNVInit() error {
 	return err
 }
 
-func (d *DacIO) EnablePSU() error {
-	d.mutex.Lock()
+func (d *DacIO) enablePSU() error {
 	err := d.psuEnaPin.SetLow()
-	d.mutex.Unlock()
 	return err
 }
 
-func (d *DacIO) DisablePSU() error {
-	d.mutex.Lock()
+func (d *DacIO) disablePSU() error {
 	err := d.psuEnaPin.SetHigh()
-	d.mutex.Unlock()
 	return err
 }
