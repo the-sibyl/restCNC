@@ -127,7 +127,7 @@ type RestServer struct {
 	spindleEnable bool
 }
 
-func Open(addr string) (*RestServer) {
+func Open(addr string, d *dacIO.DacIO) (*RestServer) {
 	var c RestServer
 
 	// Set up REST/HTTP portions
@@ -149,7 +149,7 @@ func Open(addr string) (*RestServer) {
 	c.ramping = false
 	c.spindleEnable = false
 
-// TODO: set c.hw
+	c.hw = d
 
 	return &c
 }

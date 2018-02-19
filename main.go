@@ -21,11 +21,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 package main
 
 import (
-	"fmt"
+//	"fmt"
 
 	"github.com/the-sibyl/sysfsGPIO"
 	"github.com/the-sibyl/restCNC/dacIO"
-//	"github.com/the-sibyl/restCNC/CNCRestServer"
+	"github.com/the-sibyl/restCNC/CNCRestServer"
 )
 
 func main() {
@@ -42,7 +42,11 @@ func main() {
 	}
 	defer d.Close()
 
-	go func() {
+	c := CNCRestServer.Open(":8080", d)
+	defer c.Close()
+
+/*
+//	go func() {
 		for {
 			fmt.Println("Ramping")
 			d.RampToRPM(10000)
@@ -59,7 +63,8 @@ func main() {
 			d.RampToRPM(3850)
 			d.RampToRPM(350)
 		}
-	} ()
+//	} ()
+*/
 
 }
 
