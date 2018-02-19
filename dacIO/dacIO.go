@@ -23,29 +23,37 @@ package dacIO
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
-	"golang.org/x/exp/io/i2c"
 	"github.com/the-sibyl/sysfsGPIO"
-	"github.com/the-sibyl/restCNC/CNCRestServer"
+	"golang.org/x/exp/io/i2c"
 )
 
-
-// This struct contains information for the DAC and the power supply enable pin
 type dacIO struct {
-	PSUEnaPin *sysfsGPIO.IOPin
-	I2CConn *i2c.Device
-	A0Pin *sysfsGPIO.IOPin
+	// Hardware-related fields
+	// Power supply enable pin
+	psuEnaPin *sysfsGPIO.IOPin
+	// MCP4725 I2C device
+	i2cConn *i2c.Device
+	// Address 0 pin for the MCP4725 breakout
+	a0Pin *sysfsGPIO.IOPin
+
+	// Calculation-related fields
 	// Time delay between sending commands when ramping up/down RPM
-	RampDelay time.Duration
+	rampDelay time.Duration
 	// Currently set voltage
-	CurVoltage int
+	curVoltage int
 	// Arbitrary scale factor. This should be improved upon if the project is expanded.
-	DACScaleFactor float32
-	// CNC REST Server struct to handle I/O from the LinuxCNC machine
-	RestServer *CNCRestServer.RestServer
-	// Daemon control channel
-	daemonControl chan bool
+	dacScaleFactor float32
+
+	// Emergency stop signal - using a channel because of possible future implementations
+	EStop chan bool
+	// Unexported internal variable
+	eStop bool
+
+	// General mutex for blocking multiple operations from other packages
+	mutex *sync.Mutex
 }
 
 // Open the device
@@ -53,96 +61,108 @@ func Open(devString string, i2cAddress int, a0Pin int, psuEnaPin int) (*dacIO, e
 	var d dacIO
 	var err error
 
+	d.mutex = &sync.Mutex{}
+
 	// Default ramp delay
-	d.RampDelay = 0
+	d.rampDelay = 0
 
 	// Default scale factor (guess)
-	d.DACScaleFactor = 0.4
+	d.dacScaleFactor = 0.4
 
 	// The LSB of the I2C address (A0) is configured from this GPIO. Set it low to make A0=0.
-	d.A0Pin, err = sysfsGPIO.InitPin(a0Pin, "out")
+	d.a0Pin, err = sysfsGPIO.InitPin(a0Pin, "out")
 	if err != nil {
 		return &d, err
 	}
-	d.A0Pin.SetLow()
+	d.a0Pin.SetLow()
 	// Set up I2C
-	d.I2CConn, err = i2c.Open(&i2c.Devfs{Dev: devString}, i2cAddress)
+	d.i2cConn, err = i2c.Open(&i2c.Devfs{Dev: devString}, i2cAddress)
 	if err != nil {
 		return &d, err
 	}
 
 	// Enable pin for the power supply, active low
-	d.PSUEnaPin, err = sysfsGPIO.InitPin(psuEnaPin, "out")
+	d.psuEnaPin, err = sysfsGPIO.InitPin(psuEnaPin, "out")
 	if err != nil {
 		return &d, err
 	}
-	d.PSUEnaPin.SetHigh()
+	d.psuEnaPin.SetHigh()
 
-	d.RestServer = CNCRestServer.Open(":8080")
-// TODO: Connect channels to a handler goroutine
+	d.EStop = make(chan bool)
+	d.eStop = true
 
-	// Run a daemon goroutine
-	// This channel will close the daemon as soon as a value (true) is passed
-	d.daemonControl = make(chan bool)
-	go d.daemon()
+	go func() {
+		for {
+			select {
+			case d.eStop = <-d.EStop:
+				// Disable the power supply upon emergency stop
+				if d.eStop {
+					d.DisablePSU()
+				} else {
+					d.EnablePSU()
+				}
+			}
+		}
+	}()
 
 	return &d, err
 }
 
 // Close the device
 func (d *dacIO) Close() {
-	d.A0Pin.ReleasePin()
-	d.I2CConn.Close()
-	d.PSUEnaPin.ReleasePin()
-}
-
-func (d *dacIO) daemon() {
-	for {
-		select {
-			case <-d.daemonControl:
-				return
-			case ena := <-d.RestServer.SpindleEnable:
-				_ = ena
-				return
-			case nsp := <-d.RestServer.NewSetpoint:
-				_ = nsp
-				return
-		}
-	}
+	d.a0Pin.ReleasePin()
+	d.i2cConn.Close()
+	d.psuEnaPin.ReleasePin()
 }
 
 // Set the sleep duration between when a voltage command is sent to ramp up/down
 func (d *dacIO) SetRampDelay(t time.Duration) {
-	d.RampDelay = t
+	d.mutex.Lock()
+
+	d.rampDelay = t
+
+	d.mutex.Unlock()
 }
 
-// Ramp upward or downward to a particular RPM value, LSB by LSB
+// Ramp upward or downward to a particular RPM value, LSB by LSB. This function may be interrupted by an EStop signal.
 func (d *dacIO) RampToRPM(rpm int) {
-	finalVoltage := int(float32(rpm) * d.DACScaleFactor)
-	fmt.Println("rpm:", rpm, "final voltage:", finalVoltage)
+	d.mutex.Lock()
+
+	finalVoltage := int(float32(rpm) * d.dacScaleFactor)
 
 	delta := 0
 
-	if finalVoltage > d.CurVoltage {
+	if finalVoltage > d.curVoltage {
 		delta = 1
 	} else {
 		delta = -1
 	}
-	for cur := d.CurVoltage; cur != finalVoltage; cur += delta {
-		err := d.WriteVoltage(cur)
+
+	for cur := d.curVoltage; cur != finalVoltage && cur >= 0; cur += delta {
+		// Expected behavior: if the EStop signal is caught, the spindle will have to stop before it can be
+		// restarted. If the EStop signal is VERY short (on the order of milliseconds), it may not be caught,
+		// but such a signal is useless anyway.
+		if d.eStop {
+			delta = -1
+			finalVoltage = 0
+		}
+
+		err := d.writeVoltage(cur)
 		if err != nil {
 			fmt.Println(err)
 		}
-		time.Sleep(d.RampDelay)
+		time.Sleep(d.rampDelay)
 	}
 
-	d.CurVoltage = finalVoltage
+	d.curVoltage = finalVoltage
+
+	d.mutex.Unlock()
 }
 
 // Write the voltage to volatile memory
-func (d *dacIO) WriteVoltage(voltage int) error {
-	if voltage < 0 || voltage >= 1 << 12 {
-		return errors.New("WriteVoltage() voltage value out of range")
+func (d *dacIO) writeVoltage(voltage int) error {
+	if voltage < 0 || voltage >= 1<<12 {
+		return errors.New("writeVoltage() voltage value out of range")
 	}
 
 	// The first four bits corresponding to Fast Mode and Power Down Select are zeroed
@@ -150,19 +170,26 @@ func (d *dacIO) WriteVoltage(voltage int) error {
 	// Mask out all but the lowest byte for clarity (truncated anyway)
 	lowByte := byte(0xFF & voltage)
 	// The two bytes are repeated to complete a command
-	err := d.I2CConn.Write([]byte{highByte, lowByte, highByte, lowByte})
+	err := d.i2cConn.Write([]byte{highByte, lowByte, highByte, lowByte})
 	return err
 }
 
 // This function needs to be done one time per device to set the power-up default output to 0V
 func (d *dacIO) WriteNVInit() error {
+	// TODO: Complete this
 	return nil
 }
 
 func (d *dacIO) EnablePSU() error {
-	return d.PSUEnaPin.SetLow()
+	d.mutex.Lock()
+	err := d.psuEnaPin.SetLow()
+	d.mutex.Unlock()
+	return err
 }
 
 func (d *dacIO) DisablePSU() error {
-	return d.PSUEnaPin.SetHigh()
+	d.mutex.Lock()
+	err := d.psuEnaPin.SetHigh()
+	d.mutex.Unlock()
+	return err
 }
