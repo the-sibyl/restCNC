@@ -22,6 +22,7 @@ package main
 
 import (
 //	"fmt"
+	"time"
 
 	"github.com/the-sibyl/sysfsGPIO"
 	"github.com/the-sibyl/restCNC/dacIO"
@@ -44,6 +45,10 @@ func main() {
 
 	c := CNCRestServer.Open(":8080", d)
 	defer c.Close()
+
+	for {
+		time.Sleep(time.Second)
+	}
 
 /*
 //	go func() {
